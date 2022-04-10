@@ -1,37 +1,8 @@
 import os.path
-from os import path
 import cv2
 import numpy as np
 from tqdm import tqdm 
 from scipy.sparse.linalg import svds
-
-# directory where videos are stored
-dataDir = "."
-
-# Data files should be .avi's and have the following form:
-# '<dataDir><dataFilePrefix><startingFileNum>.avi'
-
-# Values users can modify:
-filename = '22-04-01-1403_scope_1.avi' # '22-04-01-1403_scope_'
-# filename = 'AlreadyDone/21-11-05-1450_scope_1.avi' # '22-04-01-1403_scope_'
-max_frames = 25000
-# -------------------------------
-
-# TODO: Grab frames per file from metadate
-
-data_file = os.path.join(dataDir,filename)
-assert(os.path.exists(data_file))
-
-# # Read in a single frame from the file to get the dimensions 
-# cap = cv2.VideoCapture(data_file)
-# ret, _frame = cap.read()
-# if (ret is False):
-#     raise(IndexError('Read past end of file looking for frame'))
-# frame = _frame[:,:,1]
-
-# # Frame dimensions
-# dx, dy = frame.shape
-
 
 def generate_fft_mask(dx, dy, shape='pie_slice'):
     assert(dx==dy) # TODO: Mask code assumes square
@@ -87,87 +58,96 @@ def generate_fft_mask(dx, dy, shape='pie_slice'):
 
 
 
-# Load full video into memory
-frame_data = []
 
-print('Loading file into memory.')
-cap = cv2.VideoCapture(data_file)
+def remove_noise(input_filename, remove_stripes=True, remove_flicker=True,
+                 output_directory='Denoised', output_suffix='_denoised',
+                 compression_codec = "FFV1",
+                 max_frames=25000):
 
-mask = None
+    if not (compression_codec in ['FFV1', 'GREY']):
+        raise(ValueError('Unsupported compression_codec {}'.format(compression_codec)))
 
-for frameNum in tqdm(range(0, max_frames, 1), total = max_frames, 
-                     desc ="Loading file {}".format(data_file)):
-#         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)
-    ret, frame = cap.read()
-    if (ret is False):
-        break
-    frame = frame[:,:,1]
-    dft = cv2.dft(np.float32(frame),flags = cv2.DFT_COMPLEX_OUTPUT|cv2.DFT_SCALE)
-    dft_shift = np.fft.fftshift(dft)
+    if (not remove_stripes) and (not remove_flicker):
+        raise(ValueError('No noise removal chosen! (neither remove_stripes and/or remove_flicker)'))
 
-    if mask is None:
-        mask = generate_fft_mask(*frame.shape)
+    assert(os.path.exists(input_filename))
 
-    masked_dft = dft_shift * mask
-    f_ishift = np.fft.ifftshift(masked_dft)
-    img_back = cv2.idft(f_ishift)
+    frame_data = [] # This will hold the whole video
+    # print('Loading file {} into memory.'.format(input_filename))
+    cap = cv2.VideoCapture(input_filename)
 
-    # img_back = img_back[:,:,0] # We started with a real signal, so we want a real signal
-    img_back = cv2.magnitude(img_back[:,:,0],img_back[:,:,1])
+    mask = None
+    for frameNum in tqdm(range(0, max_frames, 1), total = max_frames, 
+                        desc ="Loading file {}".format(data_file)):
+    #         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)
+        ret, frame = cap.read()
+        if (ret is False):
+            break
+        frame = frame[:,:,1]
 
-    frame_data.append(img_back)
+        if remove_stripes:
+            dft = cv2.dft(np.float32(frame),flags = cv2.DFT_COMPLEX_OUTPUT|cv2.DFT_SCALE)
+            dft_shift = np.fft.fftshift(dft)
 
-T = len(frame_data)
-dx, dy = frame_data[0].shape
+            if mask is None:
+                mask = generate_fft_mask(*frame.shape)
 
-print('Convert list to numpy array for svd.')
+            masked_dft = dft_shift * mask
+            f_ishift = np.fft.ifftshift(masked_dft)
+            img_back = cv2.idft(f_ishift)
 
-frame_data_m = np.array(frame_data)
-del frame_data # let's try to clear up some memory!!!
+            # img_back = img_back[:,:,0] # We started with a real signal, so we want a real signal
+            img_back = cv2.magnitude(img_back[:,:,0],img_back[:,:,1])
 
-print('Running SVD.')
-# Find the decomposition of the first singular value of the movie.
-# This should correspond to the flicker that we see!
-u2, s2, v2 = svds(frame_data_m.reshape(T,dx*dy) - np.mean(frame_data_m,axis=0).reshape(1,dx*dy), k=1)
+            frame_data.append(img_back)
+        else:
+            frame_data.append(frame)
 
-# Apply FFT spatial filtering and lowpass filtering to data and potentially save as a new video
+    T = len(frame_data)
+    dx, dy = frame_data[0].shape
 
-# Values users can modify:
-# # Select one below -
-# mode = "display"
-mode = 'save'
+    # print('Convert list to numpy array for svd.')
+    frame_data_m = np.array(frame_data)
+    del frame_data # let's try to clear up some memory!!!
 
-# Select one below -
-compressionCodec = "FFV1"
-# compressionCodec = "GREY"
-# --------------------
+    # Find the decomposition of the first singular value of the movie.
+    # This should correspond to the flicker that we see!
+    # print('Running SVD.')
+    if remove_flicker:
+        u2, s2, v2 = svds(frame_data_m.reshape(T,dx*dy) - np.mean(frame_data_m,axis=0).reshape(1,dx*dy), k=1)
 
-print('Writing back to disk.')
+    # Apply FFT spatial filtering and lowpass filtering to data and potentially save as a new video
 
-codec = cv2.VideoWriter_fourcc(compressionCodec[0],compressionCodec[1],compressionCodec[2],compressionCodec[3])
+    # print('Writing back to disk.')
+    codec = cv2.VideoWriter_fourcc(compression_codec[0],compression_codec[1],
+                                   compression_codec[2],compression_codec[3])
 
-if (mode == "save" and not path.exists(dataDir + "Denoised")):
-    os.mkdir(dataDir + "Denoised")
+    input_dir = os.path.dirname(input_filename)
+    if output_directory is not None:
+        if not os.path.isabs(output_directory): # output directory not specified as a full path
+            output_directory = os.path.join(input_dir, output_directory)
+        if not os.path.exists(output_directory):
+            os.mkdir(os.path.join(output_directory))
 
-if (mode == "save"):
-    write_file_name = os.path.join(dataDir, 'Denoised', 
-         os.path.splitext(os.path.basename(data_file))[0] + '_denoised.avi')
+    write_file_name = os.path.join(output_directory,  
+        os.path.splitext(os.path.basename(data_file))[0] + '{}.avi'.format(output_suffix))
+
     writeFile = cv2.VideoWriter(write_file_name,codec, 60, (dy,dx), isColor=False) 
 
-for frameNum in tqdm(range(0, T, 1), total = T, desc ="Processing file".format(data_file)):
-#         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)        
-        svd_noise_model = np.reshape(u2[frameNum]*s2*v2, (dx, dy))
-        img_back = frame_data_m[frameNum,:,:] - svd_noise_model
-        # img_back = frame_data_m[frameNum,:,:]
+    for frameNum in tqdm(range(0, T, 1), total = T, desc ="Processing file".format(data_file)):
+    #         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)   
+        if remove_flicker:     
+            svd_noise_model = np.reshape(u2[frameNum]*s2*v2, (dx, dy))
+            img_back = frame_data_m[frameNum,:,:] - svd_noise_model
+        else:
+            img_back = frame_data_m[frameNum,:,:]
         img_back[img_back >255] = 255
         img_back[img_back <0] = 0
         img_back = np.uint8(img_back)
 
-        if (mode == "save"):
-            writeFile.write(img_back)
+        writeFile.write(img_back)
 
 
-if (mode == "save"):
     writeFile.release()
 
 

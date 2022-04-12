@@ -59,7 +59,7 @@ def generate_fft_mask(dx, dy, shape='pie_slice'):
 
 
 
-def remove_noise(input_filename, remove_stripes=True, remove_flicker=True,
+def remove_noise(input_filenames, remove_stripes=True, remove_flicker=True,
                  output_directory='Denoised', output_suffix='_denoised',
                  compression_codec = "FFV1",
                  max_frames=25000):
@@ -70,38 +70,46 @@ def remove_noise(input_filename, remove_stripes=True, remove_flicker=True,
     if (not remove_stripes) and (not remove_flicker):
         raise(ValueError('No noise removal chosen! (neither remove_stripes and/or remove_flicker)'))
 
-    assert(os.path.exists(input_filename))
+    if not isinstance(input_filenames, list):
+        input_filenames = [input_filenames]
+
+    for fn in input_filenames:
+        assert(os.path.exists(fn))
 
     frame_data = [] # This will hold the whole video
-    # print('Loading file {} into memory.'.format(input_filename))
-    cap = cv2.VideoCapture(input_filename)
 
-    mask = None
-    for frameNum in tqdm(range(0, max_frames, 1), total = max_frames, 
-                        desc ="Loading file {}".format(input_filename)):
-    #         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)
-        ret, frame = cap.read()
-        if (ret is False):
-            break
-        frame = frame[:,:,1]
 
-        if remove_stripes:
-            dft = cv2.dft(np.float32(frame),flags = cv2.DFT_COMPLEX_OUTPUT|cv2.DFT_SCALE)
-            dft_shift = np.fft.fftshift(dft)
+    for fn in input_filenames:
+        cap = cv2.VideoCapture(fn)
 
-            if mask is None:
-                mask = generate_fft_mask(*frame.shape)
+        mask = None
+        for frameNum in tqdm(range(0, max_frames, 1), total = max_frames, 
+                            desc ="Loading file {}".format(fn)):
+        #         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)
+            ret, frame = cap.read()
+            if (ret is False):
+                break
+            frame = frame[:,:,1]
 
-            masked_dft = dft_shift * mask
-            f_ishift = np.fft.ifftshift(masked_dft)
-            img_back = cv2.idft(f_ishift)
+            if remove_stripes:
+                dft = cv2.dft(np.float32(frame),flags = cv2.DFT_COMPLEX_OUTPUT|cv2.DFT_SCALE)
+                dft_shift = np.fft.fftshift(dft)
 
-            # img_back = img_back[:,:,0] # We started with a real signal, so we want a real signal
-            img_back = cv2.magnitude(img_back[:,:,0],img_back[:,:,1])
+                if mask is None:
+                    mask = generate_fft_mask(*frame.shape)
 
-            frame_data.append(img_back)
-        else:
-            frame_data.append(frame)
+                masked_dft = dft_shift * mask
+                f_ishift = np.fft.ifftshift(masked_dft)
+                img_back = cv2.idft(f_ishift)
+
+                # img_back = img_back[:,:,0] # We started with a real signal, so we want a real signal
+                img_back = cv2.magnitude(img_back[:,:,0],img_back[:,:,1])
+
+                frame_data.append(img_back)
+            else:
+                frame_data.append(frame)
+
+        cap.release()
 
     T = len(frame_data)
     dx, dy = frame_data[0].shape
@@ -122,20 +130,23 @@ def remove_noise(input_filename, remove_stripes=True, remove_flicker=True,
     codec = cv2.VideoWriter_fourcc(compression_codec[0],compression_codec[1],
                                    compression_codec[2],compression_codec[3])
 
-    input_dir = os.path.dirname(input_filename)
+    input_dir = os.path.dirname(os.path.commonprefix(input_filenames))
     if output_directory is not None:
         if not os.path.isabs(output_directory): # output directory not specified as a full path
             output_directory = os.path.join(input_dir, output_directory)
         if not os.path.exists(output_directory):
             os.mkdir(os.path.join(output_directory))
 
+    # For a list of input files (i.e., [something_1, something_2, ...] ), we'll use 
+    #   the common prefix (i.e., something_) for the combined denoised version
+    write_file_prefix = os.path.splitext(os.path.commonprefix(input_filenames))[0]
     write_file_name = os.path.join(output_directory,  
-        os.path.splitext(os.path.basename(input_filename))[0] + '{}.avi'.format(output_suffix))
+        write_file_prefix + '{}.avi'.format(output_suffix))
 
     writeFile = cv2.VideoWriter(write_file_name,codec, 60, (dy,dx), isColor=False) 
 
-    for frameNum in tqdm(range(0, T, 1), total = T, desc ="Processing file".format(input_filename)):
-    #         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)   
+    for frameNum in tqdm(range(0, T, 1), total = T, 
+                         desc ="Writing denoised file: {}".format(write_file_name)):
         if remove_flicker:     
             svd_noise_model = np.reshape(u2[frameNum]*s2*v2, (dx, dy))
             img_back = frame_data_m[frameNum,:,:] - svd_noise_model

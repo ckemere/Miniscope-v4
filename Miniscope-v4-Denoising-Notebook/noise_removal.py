@@ -78,7 +78,7 @@ def remove_noise(input_filename, remove_stripes=True, remove_flicker=True,
 
     mask = None
     for frameNum in tqdm(range(0, max_frames, 1), total = max_frames, 
-                        desc ="Loading file {}".format(data_file)):
+                        desc ="Loading file {}".format(input_filename)):
     #         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)
         ret, frame = cap.read()
         if (ret is False):
@@ -130,11 +130,11 @@ def remove_noise(input_filename, remove_stripes=True, remove_flicker=True,
             os.mkdir(os.path.join(output_directory))
 
     write_file_name = os.path.join(output_directory,  
-        os.path.splitext(os.path.basename(data_file))[0] + '{}.avi'.format(output_suffix))
+        os.path.splitext(os.path.basename(input_filename))[0] + '{}.avi'.format(output_suffix))
 
     writeFile = cv2.VideoWriter(write_file_name,codec, 60, (dy,dx), isColor=False) 
 
-    for frameNum in tqdm(range(0, T, 1), total = T, desc ="Processing file".format(data_file)):
+    for frameNum in tqdm(range(0, T, 1), total = T, desc ="Processing file".format(input_filename)):
     #         cap.set(cv2.CAP_PROP_POS_FRAMES, frameNum)   
         if remove_flicker:     
             svd_noise_model = np.reshape(u2[frameNum]*s2*v2, (dx, dy))
